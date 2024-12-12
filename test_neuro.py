@@ -10,16 +10,16 @@ def get_telegram_file_url(bot_token, file_id):
     return f"https://api.telegram.org/file/bot/{file_path}"
 
 async def detect_faces():
-    bot_token = "1202529776:AAFRwyZ3FZ1RldD6zUjn9w7bvtamiFgn3Zw"
-    file_id = "YOUR_FILE_ID"  # Замените на file_id файла в Telegram
+    # bot_token = "1202529776:AAFRwyZ3FZ1RldD6zUjn9w7bvtamiFgn3Zw"
+    # file_id = "YOUR_FILE_ID"  # Замените на file_id файла в Telegram
 
     # Получение прямой ссылки на файл
-    media_url = get_telegram_file_url(bot_token, file_id)
+    # media_url = get_telegram_file_url(bot_token, file_id)
 
     url = "https://deepswapper-face-swap.p.rapidapi.com/face-swap/detect-faces"
 
     payload = {
-        "mediaUrl": media_url
+        "mediaUrl": "https://drive.google.com/file/d/1zZmKCbKefIR4vBmav2t_tIrQ5L3ljfeW/view?usp=sharing"
     }
     headers = {
         "x-rapidapi-key": "a168117e98mshe489e29a68a9ce2p1fdd0fjsne3d870ea8d06",
