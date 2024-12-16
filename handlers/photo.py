@@ -6,10 +6,12 @@ from aiogram.filters import Command
 from PIL import Image
 from config import bot, BOT_TOKEN
 from middleware import AlbumMiddleware
-from aiogram.types import FSInputFile, InlineKeyboardMarkup, InlineKeyboardButton, InputSticker
+from aiogram.types import FSInputFile, InlineKeyboardMarkup, InlineKeyboardButton, InputSticker, InputMediaPhoto
+# from aiogram.utils.media_group import MediaGroupBuilder
 from aiogram.fsm.state import StatesGroup, State
 from database import get_all_groups_from_db
 from utils import generate_model
+
 
 photos_router = Router()
 
@@ -84,6 +86,7 @@ async def select_group(callback_query: types.CallbackQuery, state: FSMContext):
 @photos_router.callback_query(F.data.startswith("start_gen"))
 async def generation(callback_query: types.CallbackQuery, state: FSMContext):
     await callback_query.message.edit_text("Процесс запущен. Ожидайте.")
+    user_id = callback_query.from_user.id
     data = await state.get_data()
     swap_image = data.get("local_file_path")
     group_name = data.get("selected_group")
@@ -92,7 +95,7 @@ async def generation(callback_query: types.CallbackQuery, state: FSMContext):
 
     try:
         # Вызываем функцию
-        results = await generate_model(target_images_folder, swap_image)
+        results = await generate_model(target_images_folder, swap_image, user_id)
 
         # Выводим результаты
         for result in results:
@@ -113,10 +116,12 @@ async def generation(callback_query: types.CallbackQuery, state: FSMContext):
 @photos_router.callback_query(F.data == "create_new_group")
 async def create_new_group(callback_query: types.CallbackQuery, state: FSMContext):
     await callback_query.message.edit_text("Введите название новой группы мемов:")
+    await state.update_data(last_state=state.get_state())
     await state.set_state(CreateMemeGroup.waiting_for_group_name)
 
 @photos_router.message(CreateStickerPack.waiting_for_memes, F.photo | F.text == "готово")
 async def handle_photo_meme(message: types.Message, state: FSMContext, album: list = None):
+    user_id = message.from_user.id
     data = await state.get_data()
     swap_image = data.get("local_file_path")
     group_name = data.get("selected_group")
@@ -125,7 +130,7 @@ async def handle_photo_meme(message: types.Message, state: FSMContext, album: li
 
     try:
         # Вызываем функцию
-        results = await generate_model(target_images_folder, swap_image)
+        results = await generate_model(target_images_folder, swap_image, user_id)
 
         # Выводим результаты
         for result in results:
@@ -148,10 +153,20 @@ async def handle_photo_meme(message: types.Message, state: FSMContext, album: li
 def resize_image_to_telegram_requirements(input_path, output_path):
     """
     Изменяет размер изображения под требования Telegram для стикеров.
+    Если размеры изображения меньше 512x512, увеличивает его пропорционально.
     """
     with Image.open(input_path) as img:
-        max_size = 512  # Максимальный размер стороны
-        img.thumbnail((max_size, max_size))  # Пропорциональное уменьшение
+        min_size = 512  # Минимальный размер стороны
+        width, height = img.size
+
+        # Если обе стороны меньше 512, увеличиваем изображение
+        if width < min_size or height < min_size:
+            scale = max(min_size / width, min_size / height)
+            new_width = int(width * scale)
+            new_height = int(height * scale)
+            img = img.resize((new_width, new_height), Image.LANCZOS)
+
+        img.thumbnail((min_size, min_size))  # Пропорциональное изменение размера
         img = img.convert("RGBA")  # Убедиться, что изображение в формате RGBA
         img.save(output_path, format="PNG")
 
@@ -216,22 +231,22 @@ async def create_sticker_pack(message: types.Message, state: FSMContext):
         await message.reply(f"Стикерпак '{sticker_pack_title}' создан успешно! Ссылка на стикерпак: https://t.me/addstickers/{sticker_pack_name}")
 
         # Отправляем все сгенерированные фото альбомом
-        media_group = MediaGroup()
+        media_group = []
         for i, path_data in enumerate(paths):
             resized_path = f"./images/temp/resized_sticker_{i}.png"
             if os.path.exists(resized_path):
-                media_group.attach_photo(FSInputFile(resized_path))
+                media_group.append(InputMediaPhoto(media=FSInputFile(resized_path)))
 
         if media_group:
             await message.answer_media_group(media_group)
+
+        # Удаление временных файлов
+        for i, path_data in enumerate(paths):
+            resized_path = f"./images/temp/resized_sticker_{i}.png"
+            orig_path = path_data.get('output')
+            if os.path.exists(resized_path):
+                os.remove(resized_path)
+            if os.path.exists(orig_path):
+                os.remove(orig_path)
     except Exception as e:
         await message.reply(f"Ошибка при создании стикерпака: {e}")
-
-    # Удаление временных файлов
-    for i, path_data in enumerate(paths):
-        resized_path = f"./images/temp/resized_sticker_{i}.png"
-        orig_path = path_data.get('output')
-        if os.path.exists(resized_path):
-            os.remove(resized_path)
-        if os.path.exists(orig_path):
-            os.remove(orig_path)

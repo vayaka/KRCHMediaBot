@@ -34,6 +34,7 @@ async def set_group_name(message: types.Message, state: FSMContext):
 async def save_group_photos(message: types.Message, state: FSMContext, album: list):
     data = await state.get_data()
     group_name = data.get("group_name")
+    last_state = data.get("last_state")
 
     group_folder = f"images/meme_groups/{group_name}"
     os.makedirs(group_folder, exist_ok=True)
@@ -46,3 +47,4 @@ async def save_group_photos(message: types.Message, state: FSMContext, album: li
 
     await message.reply(f"Фото сохранены в группу '{group_name}'.")
     await state.clear()
+    await state.set_state(last_state)
