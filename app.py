@@ -1,13 +1,14 @@
+import torch
 import insightface
 import os
 import onnxruntime
 import cv2
 import gfpgan
-import tempfile
 import time
 
 class Predictor:
     def __init__(self):
+        self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         self.setup()
 
     def setup(self):
@@ -25,10 +26,11 @@ class Predictor:
 
         """Load the model into memory to make running multiple predictions efficient"""
         self.face_swapper = insightface.model_zoo.get_model('models/inswapper_128.onnx',
-                                                            providers=onnxruntime.get_available_providers())
-        self.face_enhancer = gfpgan.GFPGANer(model_path='models/GFPGANv1.4.pth', upscale=1)
+                                                            providers=["CUDAExecutionProvider", "CPUExecutionProvider"])
+        self.face_enhancer = gfpgan.GFPGANer(model_path='models/GFPGANv1.4.pth', upscale=1, device=self.device)
         self.face_analyser = insightface.app.FaceAnalysis(name='buffalo_l')
         self.face_analyser.prepare(ctx_id=0, det_size=(640, 640))
+        print("Models loaded on device:", self.device)
 
     def get_face(self, img_data):
         analysed = self.face_analyser.get(img_data)
@@ -39,8 +41,9 @@ class Predictor:
             print("No face found")
             return None
 
-    def predict(self, input_image, swap_image):
+    def predict(self, input_image, swap_image, user_id):
         """Run a single prediction on the model"""
+        image_name = f"{user_id}_" + input_image.split('\\')[0].split('/')[-1] + "_" + input_image.split('\\')[-1].split(".")[0]
 
         input_image_path = os.path.abspath(input_image)
         swap_image_path = os.path.abspath(swap_image)
@@ -59,7 +62,7 @@ class Predictor:
                 result,
                 paste_back=True
             )
-            out_path = os.path.abspath(f"./images/temp/{str(int(time.time()))}.jpg")
+            out_path = os.path.abspath(f"./images/temp/{image_name}.jpg")
             os.makedirs(os.path.dirname(out_path), exist_ok=True)
             cv2.imwrite(out_path, result)
             return out_path

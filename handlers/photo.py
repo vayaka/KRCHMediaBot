@@ -7,24 +7,14 @@ from PIL import Image
 from config import bot, BOT_TOKEN
 from middleware import AlbumMiddleware
 from aiogram.types import FSInputFile, InlineKeyboardMarkup, InlineKeyboardButton, InputSticker, InputMediaPhoto
+from aiogram.utils.keyboard import InlineKeyboardBuilder
 # from aiogram.utils.media_group import MediaGroupBuilder
-from aiogram.fsm.state import StatesGroup, State
+from states import CreateStickerPack, CreateMemeGroup
 from database import get_all_groups_from_db
-from utils import generate_model
+from utils import task_queue
 
 
 photos_router = Router()
-
-photos_router.message.middleware(AlbumMiddleware(latency=0.4))
-
-class CreateStickerPack(StatesGroup):
-    waiting_for_photo_A = State()
-    waiting_for_memes = State()
-    waiting_for_name_pack = State()
-
-class CreateMemeGroup(StatesGroup):
-    waiting_for_group_name = State()
-    waiting_for_group_photos = State()
 
 
 @photos_router.message(Command("start"))
@@ -58,13 +48,15 @@ async def handle_photo_A(message: types.Message, state: FSMContext):
     groups = await get_all_groups_from_db()
     print(groups)
     # Создание inline кнопок для выбора группы
-    keyboard_buttons = [[]]
-    for group_id, group_name in groups:
-        button = InlineKeyboardButton(text=group_name, callback_data=f"select_group:{group_id}:{group_name}")
-        keyboard_buttons[0].append(button)  # Добавляем кнопку
-    keyboard_buttons[0].append(InlineKeyboardButton(text="Создать новую группу", callback_data="create_new_group"))
+    builder = InlineKeyboardBuilder()
 
-    keyboard = InlineKeyboardMarkup(inline_keyboard=keyboard_buttons, row_width=2)
+    for group_id, group_name in groups:
+        builder.button(text=group_name, callback_data=f"select_group:{group_id}:{group_name}")
+    builder.button(text="Создать новую группу", callback_data="create_new_group")
+
+    builder.adjust(4, 1)
+
+    keyboard = InlineKeyboardMarkup(inline_keyboard=builder.export())
 
     await message.answer("Выберите группу для мемов или создайте новую:", reply_markup=keyboard)
     await state.update_data(local_file_path=local_file_path)
@@ -91,32 +83,20 @@ async def generation(callback_query: types.CallbackQuery, state: FSMContext):
     swap_image = data.get("local_file_path")
     group_name = data.get("selected_group")
 
-    target_images_folder = f"images/meme_groups/{group_name}"
+    target_images_folder = f"./images/meme_groups/{group_name}"
 
-    try:
-        # Вызываем функцию
-        results = await generate_model(target_images_folder, swap_image, user_id)
+    await task_queue.put((user_id, {
+        "target_folder": target_images_folder,
+        "swap_image": swap_image,
+        "state": state
+    }))
 
-        # Выводим результаты
-        for result in results:
-            if "error" in result:
-                print(f"Ошибка: {result['input']} - {result['error']}")
-            else:
-                print(f"Успешно обработано: {result['input']} -> {result['output']}")
-        await state.update_data(paths=results)
-    except Exception as e:
-        print(e)
-        await callback_query.message.answer("Что-пошло не так попробуйте позже.")
-        await state.clear()
-    finally:
-        await callback_query.message.edit_text("Введите название стикерпака: ")
-        await state.set_state(CreateStickerPack.waiting_for_name_pack)
+    await callback_query.message.edit_text("Задача добавлена в очередь. Ожидайте выполнения.")
 
 
 @photos_router.callback_query(F.data == "create_new_group")
 async def create_new_group(callback_query: types.CallbackQuery, state: FSMContext):
     await callback_query.message.edit_text("Введите название новой группы мемов:")
-    await state.update_data(last_state=state.get_state())
     await state.set_state(CreateMemeGroup.waiting_for_group_name)
 
 @photos_router.message(CreateStickerPack.waiting_for_memes, F.photo | F.text == "готово")
@@ -128,24 +108,13 @@ async def handle_photo_meme(message: types.Message, state: FSMContext, album: li
 
     target_images_folder = f"images/meme_groups/{group_name}"
 
-    try:
-        # Вызываем функцию
-        results = await generate_model(target_images_folder, swap_image, user_id)
+    await task_queue.put((user_id, {
+        "target_folder": target_images_folder,
+        "swap_image": swap_image,
+        "state": state
+    }))
 
-        # Выводим результаты
-        for result in results:
-            if "error" in result:
-                print(f"Ошибка: {result['input']} - {result['error']}")
-            else:
-                print(f"Успешно обработано: {result['input']} -> {result['output']}")
-        await state.update_data(paths=results)
-    except Exception as e:
-        print(e)
-        await message.answer("Что-пошло не так попробуйте позже.")
-        await state.set_state(CreateStickerPack.waiting_for_name_pack)
-    finally:
-        await message.answer("Введите название стикерпака: ")
-        await state.set_state(CreateStickerPack.waiting_for_name_pack)
+    await message.answer("Задача добавлена в очередь. Ожидайте выполнения.")
 
 
 # Функция для изменения размера изображения
